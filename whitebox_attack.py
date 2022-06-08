@@ -19,10 +19,12 @@ transformers.logging.set_verbosity(transformers.logging.ERROR)
 import time 
 import torch
 import torch.nn.functional as F
+import copy
 
 from src.dataset import load_data
 from src.utils import bool_flag, get_output_file, print_args, load_gpt2_from_dict
 
+TOP_IDF_PERCENT = 0.2
 
 def wer(x, y):
     x = " ".join(["%d" % i for i in x])
@@ -45,8 +47,8 @@ def bert_score(refs, cands, weights=None):
     return R
 
 
-def log_perplexity(logits, coeffs):
-    shift_logits = logits[:, :-1, :].contiguous()
+def log_perplexity(logits, coeffs, loc):
+    shift_logits = logits[:, :-1, loc].contiguous()
     shift_coeffs = coeffs[:, 1:, :].contiguous()
     shift_logits = shift_logits[:, :, :shift_coeffs.size(2)]
     return -(shift_coeffs * F.log_softmax(shift_logits, dim=-1)).sum(-1).mean()
@@ -54,7 +56,7 @@ def log_perplexity(logits, coeffs):
 
 def main(args):
     pretrained = args.model.startswith('textattack')
-    output_file = get_output_file(args, args.model, args.start_index, args.start_index + args.num_samples)
+    output_file = get_output_file(args, args.model, args.start_index, args.start_index + args.num_samples, TOP_IDF_PERCENT)
     output_file = os.path.join(args.adv_samples_folder, output_file)
     print(f"Outputting files to {output_file}")
     if os.path.exists(output_file):
@@ -173,9 +175,15 @@ def main(args):
                     orig_output = orig_output[:, -1]
                 else:
                     orig_output = orig_output.mean(1)
-            log_coeffs = torch.zeros(len(input_ids), embeddings.size(0))
-            indices = torch.arange(log_coeffs.size(0)).long()
-            log_coeffs[indices, torch.LongTensor(input_ids)] = args.initial_coeff
+
+            idf_dict_copy = copy.deepcopy(idf_dict)
+            top_idf_list = list(dict(sorted(idf_dict_copy.items(), key=lambda x: x[1])[:int(TOP_IDF_PERCENT * len(idf_dict_copy))]).keys())
+            for input_id in input_ids:
+                if input_id not in top_idf_list:
+                    top_idf_list.append(input_id)
+            log_coeffs = torch.zeros(len(input_ids), len(top_idf_list))
+            for i in range(len(input_ids)):
+                log_coeffs[i, top_idf_list.index(input_ids[i])] = args.initial_coeff
             log_coeffs = log_coeffs.cuda()
             log_coeffs.requires_grad = True
 
@@ -184,7 +192,7 @@ def main(args):
         for i in range(args.num_iters):
             optimizer.zero_grad()
             coeffs = F.gumbel_softmax(log_coeffs.unsqueeze(0).repeat(args.batch_size, 1, 1), hard=False) # B x T x V
-            inputs_embeds = (coeffs @ embeddings[None, :, :]) # B x T x D
+            inputs_embeds = (coeffs @ embeddings[None, torch.LongTensor(top_idf_list), :]) # B x T x D
             pred = model(inputs_embeds=inputs_embeds, token_type_ids=token_type_ids_batch).logits
             if args.adv_loss == 'ce':
                 adv_loss = -F.cross_entropy(pred, label * torch.ones(args.batch_size).long().cuda())
@@ -195,7 +203,7 @@ def main(args):
                 adv_loss = (pred[:, label] - pred.gather(1, indices) + args.kappa).clamp(min=0).mean()
             
             # Similarity constraint
-            ref_embeds = (coeffs @ ref_embeddings[None, :, :])
+            ref_embeds = (coeffs @ ref_embeddings[None, torch.LongTensor(top_idf_list), :])
             pred = ref_model(inputs_embeds=ref_embeds)
             if args.lam_sim > 0:
                 output = pred.hidden_states[args.embed_layer]
@@ -213,7 +221,7 @@ def main(args):
                
             # (log) perplexity constraint
             if args.lam_perp > 0:
-                perp_loss = args.lam_perp * log_perplexity(pred.logits, coeffs)
+                perp_loss = args.lam_perp * log_perplexity(pred.logits, coeffs, torch.LongTensor(top_idf_list))
             else:
                 perp_loss = torch.Tensor([0]).cuda()
                 
@@ -253,7 +261,8 @@ def main(args):
         print('ADVERSARIAL TEXT')
         with torch.no_grad():
             for j in range(args.gumbel_samples):
-                adv_ids = F.gumbel_softmax(log_coeffs, hard=True).argmax(1)
+                top_adv_ids = F.gumbel_softmax(log_coeffs, hard=True).argmax(1)
+                adv_ids = torch.LongTensor(top_idf_list)[top_adv_ids]
                 if args.dataset == 'mnli':
                     if args.attack_target == 'premise':
                         adv_ids_premise = adv_ids[offset:(premise_length-offset)].cpu().tolist()
@@ -310,6 +319,7 @@ def main(args):
         'ref_losses': ref_losses,
         'times': times,
         'token_error': token_errors,
+        'top_idf_list': torch.LongTensor(top_idf_list)
     }, output_file)
 
 

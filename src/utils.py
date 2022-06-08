@@ -28,7 +28,7 @@ def target_offset(examples):
     examples["label"] = list(map(lambda x: x - 1, examples["label"]))
     return examples
 
-def get_output_file(args, model, start, end):
+def get_output_file(args, model, start, end, idf_percent):
     suffix = ''
     if args.finetune:
         suffix += '_finetune'
@@ -41,7 +41,7 @@ def get_output_file(args, model, start, end):
         attack_str += f'_kappa={args.kappa}'
 
     model_name = model.replace('/', '-')
-    output_file = f"{model_name}_{dataset_str}{suffix}_{start}-{end}"
+    output_file = f"{model_name}_{dataset_str}{suffix}_{start}-{end}_idf={int(idf_percent*100)}"
     output_file += f"_iters={args.num_iters}_{attack_str}_lambda_sim={args.lam_sim}_lambda_perp={args.lam_perp}_emblayer={args.embed_layer}_{args.constraint}.pth"
 
     return output_file
