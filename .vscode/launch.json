@@ -1,0 +1,60 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Run Attack",
+            "type": "python",
+            "request": "launch",
+            "program": "whitebox_attack.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--data_folder", "data",
+                "--dataset", "ag_news",
+                "--model", "gpt2",
+                "--finetune", "True",
+                "--start_index", "0",
+                "--num_samples", "100",
+                "--gumbel_samples", "100",
+                "--top_idf_percent", "100"
+            ]
+        },
+        {
+            "name": "Python: Train",
+            "type": "python",
+            "request": "launch",
+            "program": "text_classification.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--data_folder", "data",
+                "--dataset", "dbpedia14",
+                "--model", "gpt2",
+                "--finetune", "True",
+            ]
+        },
+        {
+            "name": "Python: Evaluate",
+            "type": "python",
+            "request": "launch",
+            "program": "evaluate_adv_samples.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--data_folder", "data",
+                "--dataset", "ag_news",
+                "--surrogate_model", "gpt2",
+                "--target_model", "gpt2",
+                "--finetune", "True",
+                "--start_index", "0",
+                "--num_samples", "100",
+                "--end_index", "100",
+                "--gumbel_samples", "1000",
+                "--top_idf_percent", "20"
+            ]
+        }
+    ]
+}

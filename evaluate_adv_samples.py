@@ -73,7 +73,8 @@ class TokenDataset(Dataset):
 
 def evaluate_adv_samples(model, tokenizer, tokenizer_surr, adv_log_coeffs, clean_texts, labels,
                          attack_target=None, gumbel_samples=100, gumbel_batch_size=10, batch_size=10,
-                         print_every=10, pretrained=False, pretrained_surrogate=False, label_perm=(lambda x: x)):
+                         print_every=10, pretrained=False, pretrained_surrogate=False, label_perm=(lambda x: x),
+                         top_idf_list=None):
 
     assert len(adv_log_coeffs) == len(labels) == len(clean_texts)
     num_samples = len(labels)
@@ -189,7 +190,7 @@ def main(args):
         surr_tokenizer.padding_side = "right"
         surr_tokenizer.pad_token = tokenizer.eos_token
         
-    clean_texts, adv_texts, clean_logits, adv_logits, adv_log_coeffs, labels, times = load_checkpoints(args)
+    clean_texts, adv_texts, clean_logits, adv_logits, adv_log_coeffs, labels, times, top_idf_list = load_checkpoints(args)
 
     label_perm = lambda x: x
     if pretrained and args.surrogate_model != args.target_model:
@@ -202,13 +203,13 @@ def main(args):
     all_sentences, all_corr, cosine_sim = evaluate_adv_samples(
         model, tokenizer, surr_tokenizer, adv_log_coeffs, clean_texts, labels, attack_target=attack_target,
         gumbel_samples=args.gumbel_samples, batch_size=args.batch_size, print_every=args.print_every,
-        pretrained=pretrained, pretrained_surrogate=pretrained_surrogate, label_perm=label_perm)
+        pretrained=pretrained, pretrained_surrogate=pretrained_surrogate, label_perm=label_perm, top_idf_list=top_idf_list)
     
     print("__logs:" + json.dumps({
         "cosine_similarity": float(cosine_sim),
         "adv_acc2": all_corr.float().mean(1).eq(1).float().mean().item()
     }))
-    output_file = get_output_file(args, args.surrogate_model, args.start_index, args.end_index)
+    output_file = get_output_file(args, args.surrogate_model, args.start_index, args.end_index, args.top_idf_percent)
     output_file = os.path.join(args.adv_samples_folder,
                                'transfer_%s_%s' % (args.target_model.replace('/', '-'), output_file))
     torch.save({
@@ -284,6 +285,9 @@ if __name__ == "__main__":
         help="print result every x samples")
     parser.add_argument("--gumbel_samples", default=100, type=int,
         help="number of gumbel samples; if 0, use argmax")
+    
+    parser.add_argument("--top_idf_percent", default=100, type=int,
+        help="percent of most frequent tokens")
 
     args = parser.parse_args()
 

@@ -41,7 +41,7 @@ def get_output_file(args, model, start, end, idf_percent):
         attack_str += f'_kappa={args.kappa}'
 
     model_name = model.replace('/', '-')
-    output_file = f"{model_name}_{dataset_str}{suffix}_{start}-{end}_idf={int(idf_percent*100)}"
+    output_file = f"{model_name}_{dataset_str}{suffix}_{start}-{end}_idf={idf_percent}"
     output_file += f"_iters={args.num_iters}_{attack_str}_lambda_sim={args.lam_sim}_lambda_perp={args.lam_perp}_emblayer={args.embed_layer}_{args.constraint}.pth"
 
     return output_file
@@ -54,9 +54,10 @@ def load_checkpoints(args):
     else:
         adv_log_coeffs, clean_texts, adv_texts = [], [], []
     clean_logits, adv_logits, times, labels = [], [], [], []
+    top_idf_list = []
     
     for i in tqdm(range(args.start_index, args.end_index, args.num_samples)):
-        output_file = get_output_file(args, args.surrogate_model, i, i + args.num_samples)
+        output_file = get_output_file(args, args.surrogate_model, i, i + args.num_samples, args.top_idf_percent)
         output_file = os.path.join(args.adv_samples_folder, output_file)
         if os.path.exists(output_file):
             checkpoint = torch.load(output_file)
@@ -75,11 +76,12 @@ def load_checkpoints(args):
                 adv_log_coeffs += checkpoint['adv_log_coeffs']
                 clean_texts += checkpoint['clean_texts']
                 adv_texts += checkpoint['adv_texts']
+            top_idf_list += checkpoint['top_idf_list']
         else:
             print('Skipping %s' % output_file)
     clean_logits = torch.cat(clean_logits, 0)
     adv_logits = torch.cat(adv_logits, 0)
-    return clean_texts, adv_texts, clean_logits, adv_logits, adv_log_coeffs, labels, times
+    return clean_texts, adv_texts, clean_logits, adv_logits, adv_log_coeffs, labels, times, top_idf_list
 
 def print_args(args):
     args_dict = vars(args)

@@ -24,8 +24,6 @@ import copy
 from src.dataset import load_data
 from src.utils import bool_flag, get_output_file, print_args, load_gpt2_from_dict
 
-TOP_IDF_PERCENT = 0.2
-
 def wer(x, y):
     x = " ".join(["%d" % i for i in x])
     y = " ".join(["%d" % i for i in y])
@@ -56,7 +54,7 @@ def log_perplexity(logits, coeffs, loc):
 
 def main(args):
     pretrained = args.model.startswith('textattack')
-    output_file = get_output_file(args, args.model, args.start_index, args.start_index + args.num_samples, TOP_IDF_PERCENT)
+    output_file = get_output_file(args, args.model, args.start_index, args.start_index + args.num_samples, args.top_idf_percent)
     output_file = os.path.join(args.adv_samples_folder, output_file)
     print(f"Outputting files to {output_file}")
     if os.path.exists(output_file):
@@ -177,7 +175,8 @@ def main(args):
                     orig_output = orig_output.mean(1)
 
             idf_dict_copy = copy.deepcopy(idf_dict)
-            top_idf_list = list(dict(sorted(idf_dict_copy.items(), key=lambda x: x[1])[:int(TOP_IDF_PERCENT * len(idf_dict_copy))]).keys())
+            print('Building Attack Coefficients with top %d percent of tokens.' % args.top_idf_percent)
+            top_idf_list = list(dict(sorted(idf_dict_copy.items(), key=lambda x: x[1])[:int(args.top_idf_percent / 100 * len(idf_dict_copy))]).keys())
             for input_id in input_ids:
                 if input_id not in top_idf_list:
                     top_idf_list.append(input_id)
@@ -386,6 +385,9 @@ if __name__ == "__main__":
         help="print loss every x iterations")
     parser.add_argument("--gumbel_samples", default=100, type=int,
         help="number of gumbel samples; if 0, use argmax")
+
+    parser.add_argument("--top_idf_percent", default=100, type=int,
+        help="percent of most frequent tokens")
 
     args = parser.parse_args()
     print_args(args)
