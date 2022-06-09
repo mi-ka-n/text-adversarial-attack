@@ -20,6 +20,7 @@ import time
 import torch
 import torch.nn.functional as F
 import copy
+import statistics
 
 from src.dataset import load_data
 from src.utils import bool_flag, get_output_file, print_args, load_gpt2_from_dict
@@ -124,6 +125,12 @@ def main(args):
     assert args.start_index < len(encoded_dataset[testset_key]), 'Starting index %d is larger than dataset length %d' % (args.start_index, len(encoded_dataset[testset_key]))
     end_index = min(args.start_index + args.num_samples, len(encoded_dataset[testset_key]))
     adv_losses, ref_losses, perp_losses, entropies = torch.zeros(end_index - args.start_index, args.num_iters), torch.zeros(end_index - args.start_index, args.num_iters), torch.zeros(end_index - args.start_index, args.num_iters), torch.zeros(end_index - args.start_index, args.num_iters)
+
+    idf_dict_copy = copy.deepcopy(idf_dict)
+    print('Building Attack Coefficients with top %d percent of tokens' % args.top_idf_percent)
+    top_idf_list = list(dict(sorted(idf_dict_copy.items(), key=lambda x: x[1])[:int(args.top_idf_percent / 100 * len(idf_dict_copy))]).keys())
+    adv_idf_list = []
+
     for idx in range(args.start_index, end_index):
         input_ids = encoded_dataset[testset_key]['input_ids'][idx]
         if args.model == 'gpt2':
@@ -174,15 +181,13 @@ def main(args):
                 else:
                     orig_output = orig_output.mean(1)
 
-            idf_dict_copy = copy.deepcopy(idf_dict)
-            print('Building Attack Coefficients with top %d percent of tokens.' % args.top_idf_percent)
-            top_idf_list = list(dict(sorted(idf_dict_copy.items(), key=lambda x: x[1])[:int(args.top_idf_percent / 100 * len(idf_dict_copy))]).keys())
+            current_top_tokens = copy.deepcopy(top_idf_list)
             for input_id in input_ids:
-                if input_id not in top_idf_list:
-                    top_idf_list.append(input_id)
-            log_coeffs = torch.zeros(len(input_ids), len(top_idf_list))
+                if input_id not in current_top_tokens:
+                    current_top_tokens.append(input_id)
+            log_coeffs = torch.zeros(len(input_ids), len(current_top_tokens))
             for i in range(len(input_ids)):
-                log_coeffs[i, top_idf_list.index(input_ids[i])] = args.initial_coeff
+                log_coeffs[i, current_top_tokens.index(input_ids[i])] = args.initial_coeff
             log_coeffs = log_coeffs.cuda()
             log_coeffs.requires_grad = True
 
@@ -191,7 +196,7 @@ def main(args):
         for i in range(args.num_iters):
             optimizer.zero_grad()
             coeffs = F.gumbel_softmax(log_coeffs.unsqueeze(0).repeat(args.batch_size, 1, 1), hard=False) # B x T x V
-            inputs_embeds = (coeffs @ embeddings[None, torch.LongTensor(top_idf_list), :]) # B x T x D
+            inputs_embeds = (coeffs @ embeddings[None, torch.LongTensor(current_top_tokens), :]) # B x T x D
             pred = model(inputs_embeds=inputs_embeds, token_type_ids=token_type_ids_batch).logits
             if args.adv_loss == 'ce':
                 adv_loss = -F.cross_entropy(pred, label * torch.ones(args.batch_size).long().cuda())
@@ -202,7 +207,7 @@ def main(args):
                 adv_loss = (pred[:, label] - pred.gather(1, indices) + args.kappa).clamp(min=0).mean()
             
             # Similarity constraint
-            ref_embeds = (coeffs @ ref_embeddings[None, torch.LongTensor(top_idf_list), :])
+            ref_embeds = (coeffs @ ref_embeddings[None, torch.LongTensor(current_top_tokens), :])
             pred = ref_model(inputs_embeds=ref_embeds)
             if args.lam_sim > 0:
                 output = pred.hidden_states[args.embed_layer]
@@ -220,7 +225,7 @@ def main(args):
                
             # (log) perplexity constraint
             if args.lam_perp > 0:
-                perp_loss = args.lam_perp * log_perplexity(pred.logits, coeffs, torch.LongTensor(top_idf_list))
+                perp_loss = args.lam_perp * log_perplexity(pred.logits, coeffs, torch.LongTensor(current_top_tokens))
             else:
                 perp_loss = torch.Tensor([0]).cuda()
                 
@@ -261,7 +266,7 @@ def main(args):
         with torch.no_grad():
             for j in range(args.gumbel_samples):
                 top_adv_ids = F.gumbel_softmax(log_coeffs, hard=True).argmax(1)
-                adv_ids = torch.LongTensor(top_idf_list)[top_adv_ids]
+                adv_ids = torch.LongTensor(current_top_tokens)[top_adv_ids]
                 if args.dataset == 'mnli':
                     if args.attack_target == 'premise':
                         adv_ids_premise = adv_ids[offset:(premise_length-offset)].cpu().tolist()
@@ -298,12 +303,14 @@ def main(args):
         else:
             adv_log_coeffs.append(log_coeffs[offset:(log_coeffs.size(0)-offset), :].cpu()) # size T x V
         
+        adv_idf_list.append(current_top_tokens)
         print('')
         print('CLEAN LOGITS')
         print(clean_logit) # size 1 x C
         print('ADVERSARIAL LOGITS')
         print(adv_logit)   # size 1 x C
             
+    print("Average time: %.2f, median: %.2f, max: %.2f, min: %.2f" % (statistics.mean(times), statistics.median(times), max(times), min(times)))
     print("Token Error Rate: %.4f (over %d tokens)" % (sum(token_errors) / len(token_errors), len(token_errors)))
     torch.save({
         'adv_log_coeffs': adv_log_coeffs, 
@@ -318,7 +325,7 @@ def main(args):
         'ref_losses': ref_losses,
         'times': times,
         'token_error': token_errors,
-        'top_idf_list': torch.LongTensor(top_idf_list)
+        'top_idf_list': adv_idf_list
     }, output_file)
 
 

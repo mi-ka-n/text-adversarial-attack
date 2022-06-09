@@ -2,4 +2,6 @@ checkpoint/
 data/
 result/
 adv_samples/
+attack_results/
+evaluate_results/
 *.pyc

@@ -91,12 +91,14 @@ def evaluate_adv_samples(model, tokenizer, tokenizer_surr, adv_log_coeffs, clean
                 log_coeffs = adv_log_coeffs['hypothesis'][i].cuda().unsqueeze(0).repeat(gumbel_batch_size, 1, 1)
             else:
                 log_coeffs = adv_log_coeffs[i].cuda().unsqueeze(0).repeat(gumbel_batch_size, 1, 1)
+                current_top_tokens = torch.LongTensor(top_idf_list[i])
             adv_ids = []
 
             # Batch sampling of adv_ids
             num_batches = int(math.ceil(gumbel_samples / gumbel_batch_size))
             for j in range(num_batches):
-                adv_ids.append(F.gumbel_softmax(log_coeffs, hard=True).argmax(-1))
+                top_adv_ids = F.gumbel_softmax(log_coeffs, hard=True).argmax(-1)
+                adv_ids.append(current_top_tokens[top_adv_ids])
             adv_ids = torch.cat(adv_ids, 0)[:gumbel_samples]
             evalset = {}
             
